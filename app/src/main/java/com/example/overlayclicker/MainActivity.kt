@@ -69,7 +69,7 @@ class MainActivity : Activity() {
                 svc == null -> Toast.makeText(this, "Önce erişilebilirlik servisini aç", Toast.LENGTH_LONG).show()
                 sel == null -> Toast.makeText(this, "Bir oyun seç", Toast.LENGTH_SHORT).show()
                 else -> {
-                    svc.showOverlay()
+                    svc.showOverlay(sel.loadLabel(pm).toString(), sel.activityInfo.packageName)
                     pm.getLaunchIntentForPackage(sel.activityInfo.packageName)?.let { startActivity(it) }
                 }
             }
