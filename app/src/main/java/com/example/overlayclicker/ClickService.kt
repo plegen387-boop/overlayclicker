@@ -58,6 +58,7 @@ class ClickService : AccessibilityService() {
     private var busy = false
     private var busyAt = 0L
     private var lastInject = 0L
+    private var lastCancel = 0L
     private var justStopped = false
 
     override fun onServiceConnected() { instance = this; wm = getSystemService(WINDOW_SERVICE) as WindowManager }
@@ -95,6 +96,7 @@ class ClickService : AccessibilityService() {
         WindowManager.LayoutParams(w, hh, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_SPLIT_TOUCH or   // başka parmak oyuna gitsin
                 (if (touch) 0 else WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE),
             PixelFormat.TRANSLUCENT).apply {
             gravity = Gravity.TOP or Gravity.START; this.x = x; this.y = y
@@ -282,7 +284,10 @@ class ClickService : AccessibilityService() {
 
     private val cb = object : AccessibilityService.GestureResultCallback() {
         override fun onCompleted(g: GestureDescription?) { busy = false }
-        override fun onCancelled(g: GestureDescription?) { busy = false }
+        override fun onCancelled(g: GestureDescription?) {
+            busy = false; lastCancel = SystemClock.uptimeMillis()
+            trigs.forEach { it.next = 0 }          // iptal olan dokunuşu hemen tekrar dene
+        }
     }
 
     private fun stroke(x: Int, y: Int, dur: Long = 10) =
@@ -310,7 +315,7 @@ class ClickService : AccessibilityService() {
                     val x = t.tx + dp(22); val y = t.ty + dp(22)
                     t.next = now + 1000L / t.cps
                     if (onBubble(x, y)) continue         // kendi baloncuğumuza asla dokunma
-                    b.addStroke(stroke(x, y)); n++
+                    b.addStroke(stroke(x, y, if (now - lastCancel < 1500) 1L else 10L)); n++
                 }
                 if (n > 0) { busy = true; busyAt = now; lastInject = now; if (!dispatchGesture(b.build(), cb, null)) { busy = false; warn() } }
             }
