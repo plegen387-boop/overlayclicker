@@ -410,4 +410,7 @@ class ClickService : AccessibilityService() {
         br.addView(btn("🗑 SİL", false) { trigs.remove(t); rm(sheet); sheet = null; rebuild() }, LinearLayout.LayoutParams(0, -2, 1f))
         br.addView(btn("TAMAM", true) { rm(sheet); sheet = null }, LinearLayout.LayoutParams(0, -2, 1f))
         r.addView(br)
-      
+        val sv = sidePanel(r)
+        val p = lp(dp(300), scr()[1] - dp(24), Math.max(dp(8), scr()[0] - dp(310)), dp(12)); wm.addView(sv, p); sheet = sv
+    }
+}
