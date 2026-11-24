@@ -22,6 +22,7 @@ class Trig(var x: Int, var y: Int, var size: Int, var tx: Int, var ty: Int, var 
     var lastUp = 0L
     var hs: GestureDescription.StrokeDescription? = null
     var longRun: Runnable? = null
+    var latched = false
 }
 
 class ClickService : AccessibilityService() {
@@ -56,10 +57,20 @@ class ClickService : AccessibilityService() {
     private var editing = false
     private var busy = false
     private var busyAt = 0L
+    private var lastInject = 0L
+    private var justStopped = false
 
     override fun onServiceConnected() { instance = this; wm = getSystemService(WINDOW_SERVICE) as WindowManager }
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {}
     override fun onInterrupt() { stopAll() }
+    // Acil durdurma: ses tuşları (dokunmatik bozulsa bile çalışır)
+    override fun onKeyEvent(e: KeyEvent): Boolean {
+        if (e.action == KeyEvent.ACTION_DOWN && (e.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || e.keyCode == KeyEvent.KEYCODE_VOLUME_UP) && trigs.any { it.active }) {
+            h.post { stopAll() }
+            return true
+        }
+        return false
+    }
     override fun onDestroy() { hideOverlay(); instance = null; super.onDestroy() }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -114,11 +125,11 @@ class ClickService : AccessibilityService() {
     }
 
     // ---------- sürükleme ----------
-    private fun drag(v: View, p: WindowManager.LayoutParams, onMove: (Int, Int) -> Unit, onTap: (() -> Unit)? = null) {
+    private fun drag(v: View, p: WindowManager.LayoutParams, onMove: (Int, Int) -> Unit, onDown: (() -> Unit)? = null, onTap: (() -> Unit)? = null) {
         var sx = 0f; var sy = 0f; var ox = 0; var oy = 0; var moved = false
         v.setOnTouchListener { _, e ->
             when (e.action) {
-                MotionEvent.ACTION_DOWN -> { sx = e.rawX; sy = e.rawY; ox = p.x; oy = p.y; moved = false }
+                MotionEvent.ACTION_DOWN -> { sx = e.rawX; sy = e.rawY; ox = p.x; oy = p.y; moved = false; onDown?.invoke() }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (e.rawX - sx).toInt(); val dy = (e.rawY - sy).toInt()
                     if (Math.abs(dx) + Math.abs(dy) > dp(6)) moved = true
@@ -143,12 +154,9 @@ class ClickService : AccessibilityService() {
         b.addView(bubbleLabel)
         val p = lp(dp(40), dp(50), dp(2), dp(150))
         wm.addView(b, p); bubble = b; bubbleLp = p
-        drag(b, p, { x, y -> p.x = x; p.y = y; wm.updateViewLayout(b, p) }) {
-            when {
-                trigs.any { it.active } -> stopAll()      // çalışırken baloncuk = DUR
-                editing -> {}
-                else -> toggleMenu()
-            }
+        drag(b, p, { x, y -> p.x = x; p.y = y; wm.updateViewLayout(b, p) },
+            onDown = { justStopped = trigs.any { it.active }; if (justStopped) stopAll() }) {
+            if (!justStopped && !editing) toggleMenu()
         }
         rebuild()
     }
@@ -241,12 +249,13 @@ class ClickService : AccessibilityService() {
                 when (e.action) {
                     MotionEvent.ACTION_DOWN -> {
                         t.downAt = now; v.animate().scaleX(1.12f).scaleY(1.12f).setDuration(80).start()
-                        if (t.mode == 0 || t.mode == 1) setActive(t, true)
+                        if (t.active && t.latched) setActive(t, false)
+                        else if (t.mode == 0 || t.mode == 1) setActive(t, true)
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                         v.animate().scaleX(1f).scaleY(1f).setDuration(80).start()
                         h.removeCallbacks(t.longRun!!)
-                        if (e.action == MotionEvent.ACTION_CANCEL) { if (t.mode == 0 || t.mode == 1) setActive(t, false) }
+                        if (e.action == MotionEvent.ACTION_CANCEL) { if (t.mode == 0 || t.mode == 1) { if (SystemClock.uptimeMillis() - lastInject < 200) t.latched = true else setActive(t, false) } }
                         else when (t.mode) {
                             0, 1 -> setActive(t, false)
                             2 -> if (now - t.downAt < 350) setActive(t, !t.active)
@@ -267,7 +276,7 @@ class ClickService : AccessibilityService() {
 
     private fun setActive(t: Trig, on: Boolean) {
         if (t.active == on) return
-        t.active = on; t.next = 0; styleTrig(t); updateBubble()
+        t.active = on; t.next = 0; if (!on) t.latched = false; styleTrig(t); updateBubble()
         h.removeCallbacks(tick); if (trigs.any { it.active }) h.post(tick)
     }
 
@@ -276,7 +285,7 @@ class ClickService : AccessibilityService() {
         override fun onCancelled(g: GestureDescription?) { busy = false }
     }
 
-    private fun stroke(x: Int, y: Int, dur: Long = 15) =
+    private fun stroke(x: Int, y: Int, dur: Long = 10) =
         GestureDescription.StrokeDescription(Path().apply { moveTo(x.toFloat(), y.toFloat()) }, 0, dur)
 
     private fun onBubble(x: Int, y: Int): Boolean {
@@ -303,7 +312,7 @@ class ClickService : AccessibilityService() {
                     if (onBubble(x, y)) continue         // kendi baloncuğumuza asla dokunma
                     b.addStroke(stroke(x, y)); n++
                 }
-                if (n > 0) { busy = true; busyAt = now; if (!dispatchGesture(b.build(), cb, null)) { busy = false; warn() } }
+                if (n > 0) { busy = true; busyAt = now; lastInject = now; if (!dispatchGesture(b.build(), cb, null)) { busy = false; warn() } }
             }
             h.postDelayed(this, 6)
         }
