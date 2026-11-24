@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -63,11 +64,31 @@ class ClickService : AccessibilityService() {
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
+    @Suppress("DEPRECATION")
+    private fun scr(): IntArray {
+        val dm = android.util.DisplayMetrics(); wm.defaultDisplay.getRealMetrics(dm)
+        return intArrayOf(dm.widthPixels, dm.heightPixels)
+    }
+
+    private var warned = false
+    private fun warn() {
+        if (!warned) { warned = true; Toast.makeText(this, "Dokunma gönderilemedi: erişilebilirlik servisini kapat-aç", Toast.LENGTH_LONG).show() }
+    }
+
+    private fun sidePanel(c: LinearLayout): ScrollView {
+        c.background = null
+        return ScrollView(this).apply { background = shape(PANEL, Color.parseColor("#E8264A"), false, false); addView(c) }
+    }
+
     private fun lp(w: Int, hh: Int, x: Int, y: Int, touch: Boolean = true) =
         WindowManager.LayoutParams(w, hh, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 (if (touch) 0 else WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE),
-            PixelFormat.TRANSLUCENT).apply { gravity = Gravity.TOP or Gravity.START; this.x = x; this.y = y }
+            PixelFormat.TRANSLUCENT).apply {
+            gravity = Gravity.TOP or Gravity.START; this.x = x; this.y = y
+            if (Build.VERSION.SDK_INT >= 28) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
 
     private fun shape(fill: Int, stroke: Int, dashed: Boolean = false, oval: Boolean = true) = GradientDrawable().apply {
         if (oval) shape = GradientDrawable.OVAL else cornerRadius = dp(6).toFloat()
@@ -255,7 +276,7 @@ class ClickService : AccessibilityService() {
         override fun onCancelled(g: GestureDescription?) { busy = false }
     }
 
-    private fun stroke(x: Int, y: Int, dur: Long = 8) =
+    private fun stroke(x: Int, y: Int, dur: Long = 15) =
         GestureDescription.StrokeDescription(Path().apply { moveTo(x.toFloat(), y.toFloat()) }, 0, dur)
 
     private fun onBubble(x: Int, y: Int): Boolean {
@@ -265,7 +286,7 @@ class ClickService : AccessibilityService() {
 
     private fun tapOnce(t: Trig) {
         val x = t.tx + dp(22); val y = t.ty + dp(22)
-        if (!onBubble(x, y)) dispatchGesture(GestureDescription.Builder().addStroke(stroke(x, y)).build(), null, null)
+        if (!onBubble(x, y) && !dispatchGesture(GestureDescription.Builder().addStroke(stroke(x, y)).build(), null, null)) warn()
     }
 
     private val tick = object : Runnable {
@@ -282,7 +303,7 @@ class ClickService : AccessibilityService() {
                     if (onBubble(x, y)) continue         // kendi baloncuğumuza asla dokunma
                     b.addStroke(stroke(x, y)); n++
                 }
-                if (n > 0) { busy = true; busyAt = now; if (!dispatchGesture(b.build(), cb, null)) busy = false }
+                if (n > 0) { busy = true; busyAt = now; if (!dispatchGesture(b.build(), cb, null)) { busy = false; warn() } }
             }
             h.postDelayed(this, 6)
         }
@@ -327,7 +348,7 @@ class ClickService : AccessibilityService() {
             startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         })
         r.addView(btn("EXIT OVERLAY", false) { hideOverlay() })
-        val p = lp(dp(290), -2, dp(8), dp(40)); wm.addView(r, p); menu = r
+        val sv = sidePanel(r); val p = lp(dp(290), scr()[1] - dp(24), dp(8), dp(12)); wm.addView(sv, p); menu = sv
     }
 
     // ---------- düzenleme çubuğu ----------
@@ -347,8 +368,8 @@ class ClickService : AccessibilityService() {
         })
         r.addView(btn("İPTAL", false) { rm(sheet); sheet = null; load(); editing = false; armed = trigs.isNotEmpty(); rebuild(); rm(bar); bar = null })
         r.addView(btn("✓ KAYDET", true) { rm(sheet); sheet = null; save(); editing = false; armed = trigs.isNotEmpty(); rebuild(); rm(bar); bar = null })
-        val sw = resources.displayMetrics.widthPixels; val sh = resources.displayMetrics.heightPixels
-        val p = lp(-2, -2, Math.max(dp(8), sw / 2 - dp(200)), sh - dp(90)); wm.addView(r, p); bar = r
+        val sc = scr()
+        val p = lp(-2, -2, Math.max(dp(8), sc[0] / 2 - dp(200)), sc[1] - dp(80)); wm.addView(r, p); bar = r
     }
 
     // ---------- tetik ayar paneli ----------
@@ -389,7 +410,4 @@ class ClickService : AccessibilityService() {
         br.addView(btn("🗑 SİL", false) { trigs.remove(t); rm(sheet); sheet = null; rebuild() }, LinearLayout.LayoutParams(0, -2, 1f))
         br.addView(btn("TAMAM", true) { rm(sheet); sheet = null }, LinearLayout.LayoutParams(0, -2, 1f))
         r.addView(br)
-        val sw = resources.displayMetrics.widthPixels
-        val p = lp(dp(300), -2, Math.max(dp(8), sw - dp(310)), dp(30)); wm.addView(r, p); sheet = r
-    }
-}
+      
