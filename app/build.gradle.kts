@@ -5,6 +5,11 @@ plugins {
 }
 
 android {
+
+    buildFeatures {
+        aidl = true
+    }
+
     namespace = "com.example.overlayclicker"
     compileSdk = 34
 
