@@ -1,15 +1,9 @@
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
 
 android {
-
-    buildFeatures {
-        aidl = true
-    }
-
     namespace = "com.example.overlayclicker"
     compileSdk = 34
 
@@ -19,6 +13,10 @@ android {
         targetSdk = 34
         versionCode = 2
         versionName = "1.1"
+    }
+
+    buildFeatures {
+        aidl = true
     }
 
     compileOptions {
