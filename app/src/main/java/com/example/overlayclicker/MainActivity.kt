@@ -1,13 +1,15 @@
-
 package com.example.overlayclicker
 
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
+import android.os.IBinder
 import android.provider.Settings
 import android.view.*
 import android.widget.*
@@ -17,17 +19,60 @@ class MainActivity : Activity() {
 
     private var selected: ResolveInfo? = null
     private lateinit var shizukuStatus: TextView
+    private var remoteService: IUserService? = null
+    private var serviceBound = false
 
     private val requestCode = 1001
+
+    private val serviceArgs by lazy {
+        Shizuku.UserServiceArgs(
+            ComponentName(packageName, UserService::class.java.name)
+        )
+            .daemon(false)
+            .processNameSuffix("overlay_service")
+            .debuggable(false)
+            .version(2)
+    }
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            remoteService = IUserService.Stub.asInterface(service)
+            serviceBound = true
+
+            try {
+                val result = remoteService?.doSomething()
+                Toast.makeText(
+                    this@MainActivity,
+                    result ?: "Servis yanıt vermedi",
+                    Toast.LENGTH_LONG
+                ).show()
+            } catch (e: Exception) {
+                Toast.makeText(
+                    this@MainActivity,
+                    "Servis hatası: ${e.message}",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            remoteService = null
+            serviceBound = false
+        }
+    }
 
     private val permissionListener =
         Shizuku.OnRequestPermissionResultListener { code, result ->
             if (code == requestCode) {
-                if (result == PackageManager.PERMISSION_GRANTED) {
-                    Toast.makeText(this, "Shizuku izni verildi", Toast.LENGTH_LONG).show()
-                } else {
-                    Toast.makeText(this, "Shizuku izni verilmedi", Toast.LENGTH_LONG).show()
-                }
+                Toast.makeText(
+                    this,
+                    if (result == PackageManager.PERMISSION_GRANTED)
+                        "Shizuku izni verildi"
+                    else
+                        "Shizuku izni verilmedi",
+                    Toast.LENGTH_LONG
+                ).show()
+
                 updateShizukuStatus()
             }
         }
@@ -39,22 +84,30 @@ class MainActivity : Activity() {
 
     private val binderDeadListener =
         Shizuku.OnBinderDeadListener {
-            runOnUiThread { updateShizukuStatus() }
+            runOnUiThread {
+                remoteService = null
+                serviceBound = false
+                updateShizukuStatus()
+            }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         Shizuku.addRequestPermissionResultListener(permissionListener)
-        Shizuku.addBinderReceivedListener(binderReceivedListener)
+        Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
         Shizuku.addBinderDeadListener(binderDeadListener)
 
         val pm = packageManager
 
         val apps = pm.queryIntentActivities(
-            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), 0
-        ).filter { it.activityInfo.packageName != packageName }
-            .sortedBy { it.loadLabel(pm).toString().lowercase() }
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER),
+            0
+        ).filter {
+            it.activityInfo.packageName != packageName
+        }.sortedBy {
+            it.loadLabel(pm).toString().lowercase()
+        }
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -78,6 +131,7 @@ class MainActivity : Activity() {
                 cornerRadius = 18f
             }
         }
+
         root.addView(
             shizukuStatus,
             LinearLayout.LayoutParams(-1, -2).apply {
@@ -90,7 +144,9 @@ class MainActivity : Activity() {
                 text = t
                 setTextColor(Color.WHITE)
                 setBackgroundColor(
-                    Color.parseColor(if (red) "#FF2D55" else "#2A0B16")
+                    Color.parseColor(
+                        if (red) "#FF2D55" else "#2A0B16"
+                    )
                 )
                 setOnClickListener { f() }
             }
@@ -100,7 +156,10 @@ class MainActivity : Activity() {
         })
 
         root.addView(btn("Shizuku uygulamasını aç", false) {
-            val launch = packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+            val launch = packageManager.getLaunchIntentForPackage(
+                "moe.shizuku.privileged.api"
+            )
+
             if (launch != null) {
                 startActivity(launch)
             } else {
@@ -112,13 +171,16 @@ class MainActivity : Activity() {
             }
         })
 
-        val separator = TextView(this).apply {
+        root.addView(btn("Shizuku servisini test et", true) {
+            startShizukuService()
+        })
+
+        root.addView(TextView(this).apply {
             text = "OYUN SEÇ"
             textSize = 20f
             setTextColor(Color.WHITE)
             setPadding(0, 22, 0, 12)
-        }
-        root.addView(separator)
+        })
 
         val list = ListView(this)
 
@@ -127,17 +189,23 @@ class MainActivity : Activity() {
             override fun getItem(i: Int) = apps[i]
             override fun getItemId(i: Int) = i.toLong()
 
-            override fun getView(i: Int, v: View?, p: ViewGroup?): View {
+            override fun getView(
+                i: Int,
+                v: View?,
+                p: ViewGroup?
+            ): View {
                 val ri = apps[i]
 
                 val row = LinearLayout(this@MainActivity).apply {
                     gravity = Gravity.CENTER_VERTICAL
                     setPadding(20, 20, 20, 20)
+
                     background = GradientDrawable().apply {
                         setColor(
                             if (ri == selected)
                                 Color.parseColor("#2A0B16")
-                            else Color.TRANSPARENT
+                            else
+                                Color.TRANSPARENT
                         )
                         setStroke(
                             if (ri == selected) 3 else 0,
@@ -166,15 +234,22 @@ class MainActivity : Activity() {
         }
 
         list.adapter = adapter
+
         list.setOnItemClickListener { _, _, i, _ ->
             selected = apps[i]
             adapter.notifyDataSetChanged()
         }
 
-        root.addView(list, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(
+            list,
+            LinearLayout.LayoutParams(-1, 0, 1f)
+        )
 
         root.addView(btn("1) Erişilebilirlik iznini aç", false) {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            startActivity(
+                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            )
+
             Toast.makeText(
                 this,
                 "Overlay Clicker servisini aç",
@@ -204,9 +279,12 @@ class MainActivity : Activity() {
                         sel.loadLabel(pm).toString(),
                         sel.activityInfo.packageName
                     )
+
                     pm.getLaunchIntentForPackage(
                         sel.activityInfo.packageName
-                    )?.let { startActivity(it) }
+                    )?.let {
+                        startActivity(it)
+                    }
                 }
             }
         })
@@ -239,21 +317,63 @@ class MainActivity : Activity() {
                 return
             }
 
-            if (Shizuku.shouldShowRequestPermissionRationale()) {
-                Toast.makeText(
-                    this,
-                    "Shizuku uygulamasından izin durumunu kontrol et",
-                    Toast.LENGTH_LONG
-                ).show()
-                return
-            }
-
             Shizuku.requestPermission(requestCode)
 
         } catch (e: Exception) {
             Toast.makeText(
                 this,
-                "Shizuku bağlantısı kurulamadı: ${e.message}",
+                "Shizuku bağlantı hatası: ${e.message}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    private fun startShizukuService() {
+        try {
+            if (!Shizuku.pingBinder()) {
+                Toast.makeText(
+                    this,
+                    "Shizuku başlatılmamış",
+                    Toast.LENGTH_LONG
+                ).show()
+                return
+            }
+
+            if (Shizuku.checkSelfPermission() !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                Toast.makeText(
+                    this,
+                    "Önce Shizuku iznini ver",
+                    Toast.LENGTH_LONG
+                ).show()
+                return
+            }
+
+            if (serviceBound) {
+                Toast.makeText(
+                    this,
+                    "Servis zaten bağlı",
+                    Toast.LENGTH_SHORT
+                ).show()
+                return
+            }
+
+            Shizuku.bindUserService(
+                serviceArgs,
+                serviceConnection
+            )
+
+            Toast.makeText(
+                this,
+                "Servis bağlantısı isteniyor...",
+                Toast.LENGTH_SHORT
+            ).show()
+
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "Servis başlatılamadı: ${e.message}",
                 Toast.LENGTH_LONG
             ).show()
         }
@@ -278,7 +398,8 @@ class MainActivity : Activity() {
             }
 
         } catch (e: Exception) {
-            shizukuStatus.text = "Shizuku: BAĞLANTI KONTROL EDİLEMEDİ"
+            shizukuStatus.text =
+                "Shizuku: BAĞLANTI KONTROL EDİLEMEDİ"
         }
     }
 
@@ -288,9 +409,21 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        try {
+            if (serviceBound) {
+                Shizuku.unbindUserService(
+                    serviceArgs,
+                    serviceConnection,
+                    true
+                )
+            }
+        } catch (_: Exception) {
+        }
+
         Shizuku.removeRequestPermissionResultListener(permissionListener)
         Shizuku.removeBinderReceivedListener(binderReceivedListener)
         Shizuku.removeBinderDeadListener(binderDeadListener)
+
         super.onDestroy()
     }
 }
